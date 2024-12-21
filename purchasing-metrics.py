@@ -1,95 +1,150 @@
 import pandas as pd
 import os
+from pathlib import Path
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+
+def setup_file_paths():
+    """Set up and validate directory paths."""
+    try:
+        directory_path = Path(__file__).parent
+        raw_folder_path = directory_path / "raw"
+        output_folder_path = directory_path / "output"
+
+        # Create output directory if it doesn't exist
+        output_folder_path.mkdir(exist_ok=True)
+
+        return raw_folder_path, output_folder_path
+    except Exception as e:
+        logging.error(f"Error setting up directories: {e}")
+        raise
+
+
+def read_excel_file(file_path):
+    """Read a single Excel file and return a dataframe."""
+    try:
+        df = pd.read_excel(file_path, sheet_name="Sheet2")
+        df["source_file"] = file_path.name
+        return df
+    except Exception as e:
+        logging.error(f"Error reading file {file_path}: {e}")
+        return None
+
+
+def process_dates(df):
+    """Process all date columns in the dataframe."""
+    try:
+        # Find date columns
+        date_columns = [col for col in df.columns if "date" in col]
+        logging.info(f"Processing date columns: {date_columns}")
+
+        # Handle special case for conf_dely_date
+        df["conf_dely_date"] = df["conf_dely_date"].replace("--0", pd.NA)
+
+        # Convert to datetime
+        for col in date_columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+        # Impute conf_dely_date
+        df["conf_dely_date"] = df["conf_dely_date"].fillna(
+            df["po_requested_delivery_date"]
+        )
+
+        return df
+    except Exception as e:
+        logging.error(f"Error processing dates: {e}")
+        raise
+
+
+def process_text_columns(df):
+    """Convert specified columns to string type."""
+    text_columns = [
+        "supplier",
+        "supplier_name",
+        "item_number",
+        "item_type",
+        "po_number",
+        "buyer",
+        "source_file",
+    ]
+    for col in text_columns:
+        if col in df.columns:
+            df[col] = df[col].astype("string")
+    return df
+
+
+def export_data(df, output_path, filename):
+    """Export dataframe to multiple formats."""
+    try:
+        base_path = output_path / filename
+
+        # Export to different formats
+        df.to_excel(f"{base_path}.xlsx", index=False)
+        df.to_parquet(f"{base_path}.parquet", index=False)
+        df.to_csv(f"{base_path}.csv", index=False)
+
+        logging.info(f"Data exported successfully to {output_path}")
+    except Exception as e:
+        logging.error(f"Error exporting data: {e}")
+        raise
+
+
+def analyze_data_quality(df):
+    """Analyze and log data quality metrics."""
+    logging.info("\n=== Data Quality Report ===")
+    logging.info(f"Total rows: {len(df)}")
+    logging.info("\nNull Values Count:")
+    logging.info(df.isnull().sum())
+    logging.info("\nData Types:")
+    logging.info(df.dtypes)
+    return df
 
 
 def combine_excel_files():
-    # Get current directory and raw subfolder path
-    directory_path = os.path.dirname(os.path.abspath(__file__))
-    raw_folder_path = os.path.join(directory_path, "raw")
-    all_dataframes = []
+    """Main function to combine and process Excel files."""
+    try:
+        raw_path, output_path = setup_file_paths()
+        all_dataframes = []
 
-    # Iterate through all files in the raw directory
-    for filename in os.listdir(raw_folder_path):
-        if filename.endswith((".xlsx", ".xls")):
-            file_path = os.path.join(raw_folder_path, filename)
-            # Read each Excel file, specifically Sheet2
-            df = pd.read_excel(file_path, sheet_name="Sheet2")
-            # Add a column to identify the source file
-            df["Source_File"] = filename
-            # Append to our list
-            all_dataframes.append(df)
+        # Read all Excel files
+        for file_path in raw_path.glob("*.xls*"):
+            df = read_excel_file(file_path)
+            if df is not None:
+                all_dataframes.append(df)
 
-    # Combine all dataframes
-    combined_df = pd.concat(all_dataframes, ignore_index=True)
+        if not all_dataframes:
+            raise ValueError("No valid Excel files found")
 
-    # Rename columns: convert to lowercase and replace spaces with underscores
-    combined_df.columns = combined_df.columns.str.lower().str.replace(" ", "_")
+        # Combine dataframes
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
 
-    # Rename 'orderedquantity' to 'ordered_quantity'
-    combined_df = combined_df.rename(columns={"orderedquantity": "ordered_quantity"})
+        # Process the combined dataframe
+        combined_df.columns = combined_df.columns.str.lower().str.replace(" ", "_")
+        combined_df = combined_df.rename(
+            columns={"orderedquantity": "ordered_quantity"}
+        )
+        combined_df = process_dates(combined_df)
+        combined_df = process_text_columns(combined_df)
+        combined_df = analyze_data_quality(combined_df)
 
-    # Find all columns with 'date' in the name
-    date_columns = [col for col in combined_df.columns if "date" in col]
-    print("Date columns found:", date_columns)  # For verification
+        # Export the results
+        export_data(combined_df, output_path, "combined_data")
 
-    # Convert '--0' to NaN in conf_dely_date column
-    combined_df["conf_dely_date"] = combined_df["conf_dely_date"].replace("--0", pd.NA)
+        return combined_df
 
-    # Convert all date columns to datetime
-    for col in date_columns:
-        combined_df[col] = pd.to_datetime(combined_df[col], errors="coerce")
-
-    # Impute conf_dely_date with po_requested_delivery_date where it's null
-    combined_df["conf_dely_date"] = combined_df["conf_dely_date"].fillna(
-        combined_df["po_requested_delivery_date"]
-    )
-
-    return combined_df
+    except Exception as e:
+        logging.error(f"Error in main process: {e}")
+        raise
 
 
-# Create the combined dataframe
-combined_data = combine_excel_files()
-
-# Convert text columns to string type
-text_columns = [
-    "supplier",
-    "supplier_name",
-    "item_number",
-    "item_type",
-    "po_number",
-    "buyer",
-    "source_file",
-]
-for col in text_columns:
-    combined_data[col] = combined_data[col].astype("string")
-
-# Check for null values
-print("\nNull Values Count in Each Column:")
-print(combined_data.isnull().sum())
-
-# Get percentage of null values
-print("\nPercentage of Null Values in Each Column:")
-print((combined_data.isnull().sum() / len(combined_data)) * 100)
-
-# Optional: Display rows with any null values
-print("\nRows containing null values:")
-print(combined_data[combined_data.isnull().any(axis=1)])
-
-print(combined_data.dtypes)
-print(combined_data.describe())
-print(combined_data.info())
-
-# Export the processed dataset to CSV for further analysis
-print("\nExporting processed data to Excel file...")
-combined_data.to_excel("combined_data.xlsx", index=False)
-print("Data successfully exported to 'combined_data.xlsx'")
-
-# Export the processed dataset to parquet for further analysis
-print("\nExporting processed data to Parquet file...")
-combined_data.to_parquet("combined_data.parquet", index=False)
-print("Data successfully exported to 'combined_data.parquet'")
-
-# Export the processed dataset to CSV for further analysis
-print("\nExporting processed data to CSV file...")
-combined_data.to_csv("combined_data.csv", index=False)
-print("Data successfully exported to 'combined_data.csv'")
+if __name__ == "__main__":
+    try:
+        combined_data = combine_excel_files()
+        logging.info("Process completed successfully")
+    except Exception as e:
+        logging.error(f"Process failed: {e}")
