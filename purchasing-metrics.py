@@ -81,6 +81,11 @@ def process_text_columns(df):
 def export_data(df, output_path, filename):
     """Export dataframe to multiple formats."""
     try:
+        # Calculate days_past_due
+        current_date = pd.Timestamp.now().normalize()
+        df["planning_date"] = pd.to_datetime(df["planning_date"])
+        df["days_past_due"] = (current_date - df["planning_date"]).dt.days
+
         base_path = output_path / filename
 
         # Export to different formats
