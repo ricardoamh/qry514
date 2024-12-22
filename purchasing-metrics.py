@@ -142,9 +142,47 @@ def combine_excel_files():
         raise
 
 
+def get_past_due_orders(df):
+    """Find orders where planning date is past due and status is in specified range."""
+    try:
+        # Convert planning_date back to datetime if it's not already
+        df["planning_date"] = pd.to_datetime(df["planning_date"])
+
+        # Get current date
+        current_date = pd.Timestamp.now().normalize()
+
+        # Filter past due orders with specific status codes
+        past_due = df[
+            (df["planning_date"] < current_date)
+            & (df["po_line_low_sts"].isin([20, 35, 40, 50]))
+        ][["po_number", "planning_date", "po_line_low_sts"]]
+
+        # Calculate days past due
+        past_due["days_past_due"] = (current_date - past_due["planning_date"]).dt.days
+
+        # Sort by days past due (most overdue first)
+        past_due = past_due.sort_values("days_past_due", ascending=False)
+
+        # Export to CSV
+        output_path = Path(__file__).parent / "output"
+        past_due.to_csv(output_path / "past_due_orders.csv", index=False)
+
+        logging.info(
+            f"Found {len(past_due)} past due orders with status codes 20, 35, 40, and 50"
+        )
+        return past_due
+
+    except Exception as e:
+        logging.error(f"Error processing past due orders: {e}")
+        raise
+
+
 if __name__ == "__main__":
     try:
         combined_data = combine_excel_files()
+        past_due = get_past_due_orders(combined_data)
+        print("\nSample of past due orders:")
+        print(past_due.head())
         logging.info("Process completed successfully")
     except Exception as e:
         logging.error(f"Process failed: {e}")
