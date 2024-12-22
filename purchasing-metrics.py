@@ -145,17 +145,45 @@ def combine_excel_files():
 def get_past_due_orders(df):
     """Find orders where planning date is past due and status is in specified range."""
     try:
+        # Get raw folder path
+        raw_path = Path(__file__).parent / "raw"
+
+        # Get list of Excel files with their modification times
+        excel_files = [(f, f.stat().st_mtime) for f in raw_path.glob("*.xls*")]
+
+        # Sort by modification time and get the latest file
+        latest_file = sorted(excel_files, key=lambda x: x[1], reverse=True)[0][0]
+        logging.info(f"Processing latest file: {latest_file}")
+
+        # Read the latest file
+        latest_df = pd.read_excel(latest_file, sheet_name="Sheet2")
+
+        # Convert column names to lowercase
+        latest_df.columns = latest_df.columns.str.lower().str.replace(" ", "_")
+
+        # Add source file column
+        latest_df["source_file"] = latest_file.name
+
         # Convert planning_date back to datetime if it's not already
-        df["planning_date"] = pd.to_datetime(df["planning_date"])
+        latest_df["planning_date"] = pd.to_datetime(latest_df["planning_date"])
 
         # Get current date
         current_date = pd.Timestamp.now().normalize()
 
         # Filter past due orders with specific status codes
-        past_due = df[
-            (df["planning_date"] < current_date)
-            & (df["po_line_low_sts"].isin([20, 35, 40, 50]))
-        ][["po_number", "planning_date", "po_line_low_sts"]]
+        past_due = latest_df[
+            (latest_df["planning_date"] < current_date)
+            & (latest_df["po_line_low_sts"].isin([20, 35, 40, 50]))
+        ][
+            [
+                "po_number",
+                "planning_date",
+                "po_line_low_sts",
+                "buyer",
+                "item_number",
+                "source_file",
+            ]
+        ]
 
         # Calculate days past due
         past_due["days_past_due"] = (current_date - past_due["planning_date"]).dt.days
